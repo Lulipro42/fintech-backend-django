@@ -1,0 +1,13 @@
+# Entorno virtual (¡Súper pesado, nunca se sube!)
+venv/
+
+# Archivos temporales de Python
+__pycache__/
+*.pyc
+
+# Base de datos vieja de juguete (para que no ensucie el repo)
+back-end/db.sqlite3
+
+# Archivos del sistema operativo o editores
+.DS_Store
+.vscode/
