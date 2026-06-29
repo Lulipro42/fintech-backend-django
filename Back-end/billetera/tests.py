@@ -28,9 +28,6 @@ class RegistroUsuarioTestCase(APITestCase):
         response = self.client.post(self.url_registro, data=self.datos_usuario, format='json')
 
 
-        # 🌟 AGREGÁ ESTA LÍNEA TEMPORAL PARA ESPIAR EL ERROR:
-        print("Detalle del error 400:", response.data)
-        
         # 3. Verificamos que el status code sea 201 (CREATED)
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         
