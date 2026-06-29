@@ -1,0 +1,35 @@
+
+services:
+  db:
+    image: mysql:8.0
+    container_name: fintech_db
+    restart: always
+    environment:
+      MYSQL_DATABASE: fintech_db
+      MYSQL_ROOT_PASSWORD: Mami_pro42
+    ports:
+      - "3307:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+
+  web:
+    build: .
+    container_name: fintech_web
+    restart: always
+    command: python manage.py runserver 0.0.0.0:8000
+    volumes:
+      - .:/app
+    ports:
+      - "8000:8000"
+    env_file:      # 👈 AGREGÁ ESTA LÍNEA
+      - .env
+    depends_on:
+      - db
+    environment:
+      - DB_HOST=db
+      - DB_NAME=fintech_db
+      - DB_USER=root
+      - DB_PASSWORD=Mami_pro42
+
+volumes:
+  mysql_data:

@@ -47,7 +47,7 @@ class RegistroUsuarioTestCase(APITestCase):
 
 
 
-class TransferenciasTestaCase(APITestCase):
+class TransferenciasTestCase(APITestCase):
     def setUp(self):
     
         # 1. Creamos al Usuario Origen (El que manda la plata) y su billetera con saldo inicial
@@ -108,3 +108,28 @@ class TransferenciasTestaCase(APITestCase):
         self.walle_destino.refresh_from_db()
         self.assertEqual(self.wallet_origen.saldo, 1000.00)
         self.assertEqual(self.walle_destino.saldo, 0.00)
+    
+    def test_transferencia_destino_no_existe(self):
+        """Prueba que falle si el Alias de destino no existe en el sistema"""
+        datos_falsos = {
+            "monto": 100.00,
+            "destino": "alias.falso.inexistente"
+        }
+        response = self.client.post(self.url_transferencia, data=datos_falsos, format='json')
+        
+        # Debe rebotar con un 400 Bad Request
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        
+        # El saldo de origen tiene que seguir intacto
+        self.wallet_origen.refresh_from_db()
+        self.assertEqual(self.wallet_origen.saldo, 1000.00)
+        
+    def test_transferencia_monto_negativo(self):
+        """Prueba que el sistema rechace montos menores o iguales a cero"""
+        datos_negativos = {
+            "monto": -50.00,
+            "destino": self.walle_destino.alias
+        }
+        response = self.client.post(self.url_transferencia, data=datos_negativos,format='json')
+        
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)

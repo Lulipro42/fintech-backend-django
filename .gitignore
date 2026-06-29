@@ -11,3 +11,4 @@ back-end/db.sqlite3
 # Archivos del sistema operativo o editores
 .DS_Store
 .vscode/
+.env

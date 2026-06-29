@@ -77,9 +77,11 @@ class TransactionSerializer(serializers.ModelSerializer):
         
         # 6. Control de saldo
         monto = data.get('monto')
+        if monto <= 0:
+            raise serializers.ValidationError("El monto de la transferencia debe ser positivo")
+        
         if billetera_origen.saldo < monto:
             raise serializers.ValidationError("Saldo insuficiente.")
-        
         # Guardamos la billetera de destino encontrada en el diccionario 'data' 
         # para que la Vista pueda usarla fácilmente después.
         data['billetera_destino'] = billetera
