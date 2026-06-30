@@ -24,13 +24,13 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        # Instalamos desde la subcarpeta back-end
-        ls -R
-        # Ahora instalamos usando la ruta correcta
+        # Vamos a listar todo para estar seguros antes de instalar
+        find . -maxdepth 2
+        # Instalamos forzando la ruta desde la raíz
         pip install -r back-end/requirements.txt
         
     - name: Test with Django
       run: |
-        # Entramos a la carpeta donde vive manage.py y corremos tus tests
+        # Cambiamos al directorio correcto
         cd back-end
         python manage.py test
