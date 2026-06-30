@@ -1,4 +1,5 @@
 # 💰 Billetera Virtual API - Django REST Framework
+[![Python application](https://github.com/Lulipro42/fintech-backend-django/actions/workflows/test_and_build.yaml/badge.svg)](https://github.com/Lulipro42/fintech-backend-django/actions/workflows/test_and_build.yaml)
 
 ¡Bienvenido! Este proyecto es una API robusta para una billetera virtual que permite el registro de usuarios, perfiles, gestión de saldos y transferencias seguras en múltiples monedas (Pesos, Dólares y Euros), utilizando transacciones atómicas para asegurar la consistencia de los datos.
 
