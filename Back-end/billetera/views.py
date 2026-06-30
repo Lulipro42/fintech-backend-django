@@ -94,6 +94,12 @@ class TransferenciaView(APIView):
         try:
             # Iniciamos el proceso crítico de transferencia en la base de datos
             with transaction.atomic():
+                billetera_origen = Wallet.objects.select_for_update().get(user=request.user)
+                billetera_destino = Wallet.objects.select_for_update().get(id=billetera_destino.id)
+                
+                if billetera_origen.saldo < monto:
+                    raise ValueError("Fondos insuficientes")
+                
                 # Restamos el saldo de la billetera de origen
                 billetera_origen.saldo -= monto
                 billetera_origen.save()
