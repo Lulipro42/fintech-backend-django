@@ -52,9 +52,13 @@ class TransactionSerializer(serializers.ModelSerializer):
     # Campo temporal que no se guarda en la tabla de transacciones, sirve para que el usuario escriba el CVU o Alias
     destino = serializers.CharField(write_only=True)
     
+    # 1. Declará el campo idempotency_key como opcional
+    #Pista: usá serializers.UUIDField() con el parámetro que indica que no es obligatorio
+    idempotency_key = serializers.UUIDField(required=False)
+    
     class Meta:
         model = Transtaction
-        fields = ['monto', 'destino']
+        fields = ['monto', 'destino', 'idempotency_key']
     
     def validate(self, data):
         # 1. Capturamos el texto (CVU o Alias) que mandó el usuario

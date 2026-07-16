@@ -1,9 +1,10 @@
 from django.test import TestCase
-from django.urls import reverse
+from django.urls import reverse,
 from rest_framework import status
 from rest_framework.test import APITestCase
 from django.contrib.auth.models import User
 from .models import Wallet, Transtaction
+import uuid
 
 # Create your tests here.
 
@@ -130,3 +131,43 @@ class TransferenciasTestCase(APITestCase):
         response = self.client.post(self.url_transferencia, data=datos_negativos,format='json')
         
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        
+
+class IdempotenciaTestCase(APITestCase): # Bueno aca creo la clase
+    def setUp(self): # Aca defino el def
+        self.user_origen = User.objects.create_user(username="ana_origen", password="ana2132") # Aca creo el usuario en el cual el test, tiene que utilizar
+        self.wallet_origen = Wallet.objects.create(user=self.user_origen, saldo=1000.00) # Aca defino el saldo de ese usuario creado
+        
+        
+        self.user_destino = User.objects.create_user(username="luis_destino", password="luis1234") # bueno aca lo mismo solo que este va a ser el destinatario
+        self.wallet_destino = Wallet.objects.create(user=self.user_destino, saldo=0.00) # lo mismo solo que este arranca con 0
+        
+        self.url_transferencia = reverse('transferir') # Aca defino la accion que va a tomar el test, y lo que hce es una transferencia
+        self.client.force_authenticate(user=self.user_origen) # Aca defino que usuario agarra para la transferendia 
+        
+    def test_transferencia_duplicada_con_la_misma_key_no_descuenta_dos_veces(self):
+        """Si se manda la misma transferencia dos veces con la misma idempotency_key, el saldo no debe descontarse dos vec
+        es"""
+        # 1. Generá una key fija para usar en ambos requests
+        key = str(uuid.uuid4())
+        # Aca genero una key que yo quiera 
+        self.wallet_origen.refresh_from_db()
+        self.wallet_destino.refresh_from_db()
+        
+        datos = {
+            "monto": 300.00,
+            "destino": self.wallet_destino.alias,
+            "idempotency_key": key,
+        } # Aca creo una lista quje es del user
+        
+        response_1 = self.client.post(self.url_transferencia, data=datos, format='json') 
+        self.assertEqual(response_1.status_code, status.HTTP_200_OK)
+        # Aca pongo eso proque si da bien dtiene que dar ok
+        response_2 = self.client.post(self.url_transferencia, data=datos,format='json')
+        self.assertEqual(response_2.status_code, status. HTTP_200_OK) # Aca lo puse basandome en otro codigo que tengo y ademas pienso que esta bien debido a que si las dos se chocan pueda dar error, perdon si esta mal explicado 
+        
+        self.wallet_origen.refresh_from_db()
+        self.wallet_destino.refresh_from_db()
+        
+        self.assertEqual(self.wallet_origen.saldo,700.00) # Y aca lo mismo basandome en los demas codigos, y ademas tambien, te soy sincero es que no comprendo del todo bien como se hace que descveunte esos 300  
+        self.assertEqual(self.wallet_destino.saldo, 300.00)  # y bueno aca esta lo recibido 

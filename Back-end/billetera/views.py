@@ -1,16 +1,17 @@
 from django.shortcuts import render, redirect, get_object_or_404
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework import status
+from rest_framework import status,response
 from django.db import transaction, IntegrityError  # Escudo protector para transacciones atómicas
 from .serializers import (
     UserSerializer, ProfileSerializer, TransactionSerializer, 
-    TransactionHistorialSerializer, WalletSerializer
+     TransactionHistorialSerializer, WalletSerializer
 )
 from .models import Wallet, Transtaction, Profile  # Mantenido 'Transtaction' según tu modelo
 from rest_framework.permissions import IsAuthenticated
 from decimal import Decimal
 from django.db.models import Q
+from django.core.exceptions import ValidationError
 # Create your views here.
 # ==========================================
 # REGISTRO DE USUARIO, PERFIL Y BILLETERA
@@ -24,28 +25,34 @@ class RegistroUsuarioView(APIView):
         moneda_elegida = request.data.get('moneda', 'ARS')
         
         # Activamos la transacción atómica: si algo falla adentro, no se crea nada en la DB
-        with transaction.atomic():
-            # 1. Validamos y creamos el usuario base (encriptando contraseña)
-            seralizer_user = UserSerializer(data=data_usuario)
-            seralizer_user.is_valid(raise_exception=True)
-            usuario = seralizer_user.save()
+        try:
+            with transaction.atomic():
+                # 1. Validamos y creamos el usuario base (encriptando contraseña)
+                seralizer_user = UserSerializer(data=data_usuario)
+                seralizer_user.is_valid(raise_exception=True)
+                usuario = seralizer_user.save()
             
-            # 2. Validamos y creamos el perfil asociado
-            seriliazer_perfil = ProfileSerializer(data=data_perfil)
-            seriliazer_perfil.is_valid(raise_exception=True)
-            perfil = seriliazer_perfil.save(user=usuario)
+                # 2. Validamos y creamos el perfil asociado
+                seriliazer_perfil = ProfileSerializer(data=data_perfil)
+                seriliazer_perfil.is_valid(raise_exception=True)
+                perfil = seriliazer_perfil.save(user=usuario)
             
-            # 3. Creamos la billetera asignándole la moneda correspondiente
-            wallet = Wallet.objects.create(
-                user=usuario,
-                saldo=Decimal('0.00'),
-                moneda=moneda_elegida  # Guarda la billetera en la moneda que corresponda
-            )
+                # 3. Creamos la billetera asignándole la moneda correspondiente
+                wallet = Wallet.objects.create(
+                    user=usuario,
+                    saldo=Decimal('0.00'),
+                    moneda=moneda_elegida  # Guarda la billetera en la moneda que corresponda
+                    )
             
-            return Response(
-                {"mensaje": "Usuario, perfil y billetera creados con éxito"}, 
-                status=status.HTTP_201_CREATED
-            )
+                return Response(
+                    {"mensaje": "Usuario, perfil y billetera creados con éxito"}, 
+                    status=status.HTTP_201_CREATED
+                )
+                
+        except ValueError as e:
+            return Response({
+                "detail": str(e)
+            }, status=status.HTTP_400_BAD_REQUEST)
 # ==========================================
 # CONSULTA RÁPIDA DE SALDO
 # ==========================================
@@ -90,13 +97,37 @@ class TransferenciaView(APIView):
         # 3. Extraemos el monto y la billetera destino ya validados por el Serializer
         monto = serializer.validated_data.get('monto')
         billetera_destino = serializer.validated_data.get('billetera_destino')
+
+        # 1. Extraé la idempotency_key de los datos validados (puede no venir, usá .get())
+        idempotency_key = serializer.validated_data('idempotency_key') # Aca con el tema de uqe me dijiste para validar los datros obte por el billetrea origen ya que es el que tiene los datros del usuario, como para poder verificarlos
+        
+        if idempotency_key: # Bueno aca tambien use mi logica 
+            transaccion_existe = Transtaction.objects.filter(idempotency_key=idempotency_key).exists()
+
+            if transaccion_existe:
+                return Response({
+                    "detail":"Transferencia ya procesada anteriormente"
+                }, status=status.HTTP_200_OK)
         
         try:
             # Iniciamos el proceso crítico de transferencia en la base de datos
             with transaction.atomic():
-                billetera_origen = Wallet.objects.select_for_update().get(user=request.user)
-                billetera_destino = Wallet.objects.select_for_update().get(id=billetera_destino.id)
+                id_origen = billetera_origen.id
+                id_destino = billetera_destino.id
                 
+                
+                ids_ordenados = sorted([id_origen,id_destino])
+                
+                wallet_a = Wallet.objects.select_for_update().get(id=ids_ordenados[0])
+                wallet_b = Wallet.objects.select_for_update().get(id=ids_ordenados[1]) # Aca tenia pensado poner el [0],[1] para ordenarlos, pero no se si iba aestar bien 
+                
+                if wallet_a.user == request.user:
+                    billetera_origen = wallet_a # Algo asi piens oqeu seria el if, ya que llamo a las billeteras id, por ende tendria que poner la variable de esas que defino con el wallet etc  
+                    billetera_destino = wallet_b
+                else:
+                    billetera_origen = wallet_b # Algo asi me imagino que seria el else
+                    billetera_destino = wallet_a 
+            
                 if billetera_origen.saldo < monto:
                     raise ValueError("Fondos insuficientes")
                 
@@ -112,17 +143,29 @@ class TransferenciaView(APIView):
                 Transtaction.objects.create(
                     wallet_origen=billetera_origen,
                     walle_destino=billetera_destino,
-                    monto=monto
+                    monto=monto,
+                    idempotency_key=idempotency_key,
                 )
             
             return Response({
                 "detail": "Transferencia procesada con éxito (débito real)"
             }, status=status.HTTP_200_OK)
             
-        except Exception as e:
+        except ValueError as e: # Aca dudaba si poner el validation error o el value, pero me parece mejor idea el validation error debviod a ques del framework y ademas es para arreglar problemas de la api 
             return Response({
-                "detail": f"Ocurrió un error en el servidor, lo sentimos: {str(e)}"
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+                "detail":str(e)
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        except Exception as e:
+            print(f"Error inesperado en transferencia: {e}")
+            return Response({
+                "detail":"Lo sentimos a habido un error en el servidor"
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR) # Y bueno a ca me di vuenta que tiene que si ir el 500
+        
+        #except Exception as e:
+        #    return Response({
+        #        "detail": f"Ocurrió un error en el servidor, lo sentimos: {str(e)}"
+        #    }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 # ==========================================
 # HISTORIAL DE MOVIMIENTOS (ENTRANTES Y SALIENTES)
 # ==========================================
@@ -280,3 +323,6 @@ class MiBilleteraView(APIView):
         
         # 3. Retornamos los datos limpios estructurados hacia el cliente
         return Response(serializer.data, status=status.HTTP_200_OK)
+    
+    
+    

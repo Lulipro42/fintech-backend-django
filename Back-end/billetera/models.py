@@ -1,4 +1,4 @@
-import random
+import random, uuid
 from django.db import models
 from django.contrib.auth.models import User
 from decimal import Decimal
@@ -30,25 +30,31 @@ class Wallet(models.Model):
     # Alias para poder mejorar la interfaz del usuario en vez de poner id 
     alias = models.CharField(unique=True, max_length=50, blank=True, null=True )
     
-    def save(self, *args,**kwargs):
-        # 1. Si la billetera es nueva (no tiene ID todavía), generamos el CVU y el Alias
+    def save(self, *args, **kwargs):
         if not self.id:
-            # Generar CVU: 22 números aleatorios del 0 al 9 unidos en un string
-            # Usamos choices() por eficiencia y K=22 para definir el largo
             numeros = random.choices('0123456789', k=22)
             self.cvu = "".join(numeros)
-            
-            # Generar Alias: Lista de palabras semilla
-            palabras_semilla = [
-                "perro","gato","sol","roca","guitarra","viento","mar","nube","fuego","tierra","arbol","luna"
-            ]
-            # Elegimos 3 palabras al azar (pueden repetirse o no, según prefieras)
-            # Usamos random.sample si no quieres que se repitan, o choices si da igual
-            palabras_elegidas = random.sample(palabras_semilla, k=3)
-            self.alias = ".".join(palabras_elegidas)
-            # 2. Llamamos al método save original de Django para impactar en MySQL
-        super().save(*args, **kwargs)
         
+            palabras_semilla = [
+                "perro","gato","sol","roca","guitarra","viento","mar","nube","fuego","tierra","arbol","luna","cumbia",
+            ]      
+        
+            alias_generado = None
+            for intento in range(5):
+                candidato = ".".join(random.sample(palabras_semilla, k=3))
+                existe = Wallet.objects.filter(alias=candidato).exists()
+                if not existe:
+                    alias_generado = candidato
+                    break
+        
+            if alias_generado is None:
+                raise ValueError("No se pudo generar un alias unico, intente de nuevo")
+        
+            self.alias = alias_generado
+        # 🔴 Se borra el super().save() de acá adentro
+        # 🔴 Se borran también las líneas viejas de palabras_elegidas, ya no hacen falta
+    
+        super().save(*args, **kwargs)   # ✅ Este es el ÚNICO save(), al final, para ambos casos (creación y actualización)
     def __str__(self) -> str:
         return f"Billetera de {self.user.username} ({self.moneda})"
             
@@ -67,6 +73,9 @@ class Transtaction(models.Model):
     # 4. Fecha de la transacciónd
     fecha = models.DateTimeField(auto_now_add=True)    
     
+    idempotency_key = models.UUIDField(unique=True, null=True, blank=True)
+    
+            
     def __str__(self) -> str:
         origen = self.wallet_origen.user.username if self.wallet_origen else "Deposito externo"
         destino = self.walle_destino.user.username if self.walle_destino else "Retiro Externo"
