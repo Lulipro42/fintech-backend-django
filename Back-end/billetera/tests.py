@@ -1,5 +1,5 @@
 from django.test import TestCase
-from django.urls import reverse,
+from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
 from django.contrib.auth.models import User
@@ -164,10 +164,92 @@ class IdempotenciaTestCase(APITestCase): # Bueno aca creo la clase
         self.assertEqual(response_1.status_code, status.HTTP_200_OK)
         # Aca pongo eso proque si da bien dtiene que dar ok
         response_2 = self.client.post(self.url_transferencia, data=datos,format='json')
-        self.assertEqual(response_2.status_code, status. HTTP_200_OK) # Aca lo puse basandome en otro codigo que tengo y ademas pienso que esta bien debido a que si las dos se chocan pueda dar error, perdon si esta mal explicado 
+        self.assertEqual(response_2.status_code, status.HTTP_200_OK) # Aca lo puse basandome en otro codigo que tengo y ademas pienso que esta bien debido a que si las dos se chocan pueda dar error, perdon si esta mal explicado 
         
         self.wallet_origen.refresh_from_db()
         self.wallet_destino.refresh_from_db()
         
         self.assertEqual(self.wallet_origen.saldo,700.00) # Y aca lo mismo basandome en los demas codigos, y ademas tambien, te soy sincero es que no comprendo del todo bien como se hace que descveunte esos 300  
         self.assertEqual(self.wallet_destino.saldo, 300.00)  # y bueno aca esta lo recibido 
+    
+class DepositoTestCase(APITestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username="benja_prueba", password="benja123") # Bueno aca cree un usuraio para poder testear
+        self.wallet = Wallet.objects.create(user=self.user, saldo=100.00) #aca lo que hice es crear la biletera del usuario para poder transferirr 
+        
+        self.url_deposito = reverse('deposito_de_fondos') # Aca hice la accion que iba a ser el usuario 
+        
+        self.client.force_authenticate(user=self.user) # Esto es para qeu el usuario sea identificado por asi decirlo 
+        
+    def test_deposito_exitoso_aumenta_saldo(self): # Aca cree el def 
+        """Prueba que un depósito válido aumente el saldo correctamente"""
+        datos = { # Aca cree la lista de datos que tenai que transferir
+            "monto":50.00
+        }
+        response = self.client.post(self.url_deposito,data=datos,format='json') # Bueno aca cree la accion y en que formato 
+        
+        self.assertEqual(response.status_code, status.HTTP_200_OK) # Bueno aca si me da bien tien que dar 200 0K
+        
+        self.wallet.refresh_from_db() # Bueno aca refresca la db 
+        self.assertEqual(self.wallet.saldo, 150) # y aca el resultado 
+        
+    def test_deposito_monto_negativo_falla(self):
+        """Prueba que el sistema rechace un depósito con monto negativo"""
+        datos = {
+            "monto": -70.00
+        } # Aca le puise ese monto
+        
+        response = self.client.post(self.url_deposito, data=datos, format='json') # Bueno aca configure a donde se iba a enviar esos datos 
+        
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        # Aca defini qeu error iba dar 
+        self.wallet.refresh_from_db() # Bueno aca puse eel refresh 
+        self.assertEqual(self.wallet.saldo, 100.00) 
+        
+
+class RetiroTestCase(APITestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username="benja_test", password="benja12345")
+        self.wallet = Wallet.objects.create(user=self.user, saldo=100.00)
+        
+        self.url_retiro = reverse('wallet_retiro')
+        self.client.force_authenticate(user=self.user)
+        
+        
+    def test_retiro_exitoso_disminuye_saldo(self):
+        """Prueba que un retiro válido disminuya el saldo correctamente"""
+        datos = {
+            "monto": 40.00
+        }
+        
+        response = self.client.post(self.url_retiro, data=datos, format='json')
+        
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        self.wallet.refresh_from_db()
+        
+        self.assertEqual(self.wallet.saldo, 60.00)
+
+    def test_retiro_monto_negativo_falla(self):
+        """Prueba que el sistema rechace un retiro con monto negativo"""
+        datos = {
+            "monto": -40.00
+        }
+        response = self.client.post(self.url_retiro, data=datos, format='json') 
+        
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+        self.wallet.refresh_from_db()
+        self.assertEqual(self.wallet.saldo, 100) # Aca queda en 100, porque como me dijiste antes y me acorde, al ser negativo el saldo ni se gasta en revisar si puede pasar, si no directamente lo niega ya que es negativo 
+        
+    def test_retiro_fondos_insuficientes_falla(self):
+        """Prueba que el sistema rechace un retiro mayor al saldo disponible"""
+        datos = {
+            "monto": 200.00
+        }
+        response = self.client.post(self.url_retiro, data=datos, format='json')
+        
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        
+        self.wallet.refresh_from_db()
+        self.assertEqual(self.wallet.saldo, 100) # Y bueno aca algo parecido solo qeu el monto al ser mayor al saldo que tiene el cliente, tampco se completa la transferencia

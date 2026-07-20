@@ -5,17 +5,24 @@ from rest_framework import status,response
 from django.db import transaction, IntegrityError  # Escudo protector para transacciones atómicas
 from .serializers import (
     UserSerializer, ProfileSerializer, TransactionSerializer, 
-     TransactionHistorialSerializer, WalletSerializer
+    TransactionHistorialSerializer, WalletSerializer,DepostivoSerializer,RetiroSerializer
 )
 from .models import Wallet, Transtaction, Profile  # Mantenido 'Transtaction' según tu modelo
 from rest_framework.permissions import IsAuthenticated
 from decimal import Decimal
 from django.db.models import Q
 from django.core.exceptions import ValidationError
+from rest_framework.throttling import UserRateThrottle
+from rest_framework.pagination import PageNumberPagination
+import logging
+
 # Create your views here.
 # ==========================================
 # REGISTRO DE USUARIO, PERFIL Y BILLETERA
 # ==========================================
+logger = logging.getLogger(__name__)
+
+
 class RegistroUsuarioView(APIView):
     def post(self, request):
         data_usuario = request.data
@@ -81,6 +88,8 @@ class SaldoWalletView(APIView):
 class TransferenciaView(APIView):
     permission_classes = [IsAuthenticated]
     
+    throttle_classes = [UserRateThrottle]
+    
     def post(self, request):
         # 1. Buscamos la billetera del usuario de origen (select_related optimiza la consulta SQL)
         billetera_origen = Wallet.objects.select_related('user').filter(user=request.user).first()
@@ -99,7 +108,7 @@ class TransferenciaView(APIView):
         billetera_destino = serializer.validated_data.get('billetera_destino')
 
         # 1. Extraé la idempotency_key de los datos validados (puede no venir, usá .get())
-        idempotency_key = serializer.validated_data('idempotency_key') # Aca con el tema de uqe me dijiste para validar los datros obte por el billetrea origen ya que es el que tiene los datros del usuario, como para poder verificarlos
+        idempotency_key = serializer.validated_data.get('idempotency_key') # Aca con el tema de uqe me dijiste para validar los datros obte por el billetrea origen ya que es el que tiene los datros del usuario, como para poder verificarlos
         
         if idempotency_key: # Bueno aca tambien use mi logica 
             transaccion_existe = Transtaction.objects.filter(idempotency_key=idempotency_key).exists()
@@ -108,64 +117,40 @@ class TransferenciaView(APIView):
                 return Response({
                     "detail":"Transferencia ya procesada anteriormente"
                 }, status=status.HTTP_200_OK)
-        
-        try:
             # Iniciamos el proceso crítico de transferencia en la base de datos
-            with transaction.atomic():
-                id_origen = billetera_origen.id
-                id_destino = billetera_destino.id
-                
-                
-                ids_ordenados = sorted([id_origen,id_destino])
-                
-                wallet_a = Wallet.objects.select_for_update().get(id=ids_ordenados[0])
-                wallet_b = Wallet.objects.select_for_update().get(id=ids_ordenados[1]) # Aca tenia pensado poner el [0],[1] para ordenarlos, pero no se si iba aestar bien 
-                
-                if wallet_a.user == request.user:
-                    billetera_origen = wallet_a # Algo asi piens oqeu seria el if, ya que llamo a las billeteras id, por ende tendria que poner la variable de esas que defino con el wallet etc  
-                    billetera_destino = wallet_b
-                else:
-                    billetera_origen = wallet_b # Algo asi me imagino que seria el else
-                    billetera_destino = wallet_a 
+# 👇 Ahora SIEMPRE se ejecuta, tenga o no idempotency_key
+        with transaction.atomic():
+            id_origen = billetera_origen.id
+            id_destino = billetera_destino.id
+            ids_ordenados = sorted([id_origen, id_destino])
+            wallet_a = Wallet.objects.select_for_update().get(id=ids_ordenados[0])
+            wallet_b = Wallet.objects.select_for_update().get(id=ids_ordenados[1])
+    
+            if wallet_a.user == request.user:
+                billetera_origen = wallet_a
+                billetera_destino = wallet_b
+            else:
+                billetera_origen = wallet_b
+                billetera_destino = wallet_a
+    
+            if billetera_origen.saldo < monto:
+                raise ValueError("Fondos insuficientes")
+    
+            billetera_origen.saldo -= monto
+            billetera_origen.save()
+            billetera_destino.saldo += monto
+            billetera_destino.save()
+    
+            Transtaction.objects.create(
+                wallet_origen=billetera_origen,
+                walle_destino=billetera_destino,
+                monto=monto,
+                idempotency_key=idempotency_key,
+            )
+
+        return Response({"detail": "Transferencia procesada con éxito"}, status=status.HTTP_200_OK)
             
-                if billetera_origen.saldo < monto:
-                    raise ValueError("Fondos insuficientes")
-                
-                # Restamos el saldo de la billetera de origen
-                billetera_origen.saldo -= monto
-                billetera_origen.save()
-                
-                # Sumamos el saldo a la billetera de destino
-                billetera_destino.saldo += monto
-                billetera_destino.save()
-                
-                # Registramos el movimiento histórico del dinero
-                Transtaction.objects.create(
-                    wallet_origen=billetera_origen,
-                    walle_destino=billetera_destino,
-                    monto=monto,
-                    idempotency_key=idempotency_key,
-                )
-            
-            return Response({
-                "detail": "Transferencia procesada con éxito (débito real)"
-            }, status=status.HTTP_200_OK)
-            
-        except ValueError as e: # Aca dudaba si poner el validation error o el value, pero me parece mejor idea el validation error debviod a ques del framework y ademas es para arreglar problemas de la api 
-            return Response({
-                "detail":str(e)
-            }, status=status.HTTP_400_BAD_REQUEST)
-        
-        except Exception as e:
-            print(f"Error inesperado en transferencia: {e}")
-            return Response({
-                "detail":"Lo sentimos a habido un error en el servidor"
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR) # Y bueno a ca me di vuenta que tiene que si ir el 500
-        
-        #except Exception as e:
-        #    return Response({
-        #        "detail": f"Ocurrió un error en el servidor, lo sentimos: {str(e)}"
-        #    }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
 # ==========================================
 # HISTORIAL DE MOVIMIENTOS (ENTRANTES Y SALIENTES)
 # ==========================================
@@ -185,9 +170,15 @@ class HistorialTransactionsView(APIView):
             Q(wallet_origen=billetera_usuario) | Q(walle_destino=billetera_usuario)
         ).order_by('-id')  # Ordenado del más reciente al más antiguo
         
-        # 3. Pasamos la lista de transacciones por el serializador histórico
-        serializer = TransactionHistorialSerializer(transacciones, many=True)
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        
+        paginator = PageNumberPagination()
+        paginator.page_size = 10
+        
+        result_page = paginator.paginate_queryset(transacciones, request)
+        
+        serializer = TransactionHistorialSerializer(result_page, many=True)
+        
+        return paginator.get_paginated_response(serializer.data)
     
 # ==========================================
 # DEPOSITAR DINERO DESDE EL BANCO externos
@@ -196,55 +187,35 @@ class DepostivoView(APIView):
     permission_classes = [IsAuthenticated]
     
     def post(self, request):
-        # 1. Obtenemos la billetera del usuario
         billetera = Wallet.objects.filter(user=request.user).first()
         if not billetera:
-            return Response({
-                "detail": "El usuario no posee una billetera activa."
-            }, status=status.HTTP_404_NOT_FOUND)
+            return Response({"detail":"El usuario no posee una billetera activa"},status=status.HTTP_404_NOT_FOUND)
+        
+        # 1. Pasamos los datos al serializer
+        serializer = DepostivoSerializer(data=request.data)
+        
+        # 2. Si el serializer no es válido, devuelve un error 400 automáticamente
+        # con el formato que ya definimos en el exception_handler
+        serializer.is_valid(raise_exception=True)
 
-        monto_raw = request.data.get("monto")
-        if not monto_raw:
-            return Response({
-                "detail": "El monto no es válido"
-            }, status=status.HTTP_400_BAD_REQUEST)
-            
-        # 2. Intentamos convertir el string a Decimal de forma segura
-        try:
-            monto = Decimal(str(monto_raw))
-        except (TypeError, ValueError):
-            return Response({
-                "detail": "Formato de monto inválido"
-            }, status=status.HTTP_400_BAD_REQUEST)
-            
-        # 3. Validamos que el depósito sea una cifra positiva
-        if monto <= 0:
-            return Response({
-                "detail": "El monto debe ser mayor a cero"
-            }, status=status.HTTP_400_BAD_REQUEST)
-            
-        try:
-            # Modificamos la DB de forma segura
-            with transaction.atomic():
-                billetera.saldo += monto
-                billetera.save()
+        monto = serializer.validated_data['monto']
 
-                # Registramos el depósito (wallet_origen queda en None porque entra de afuera)
-                Transtaction.objects.create(
-                    wallet_origen=None,
-                    walle_destino=billetera,
-                    monto=monto
-                )
+
+        
+        with transaction.atomic():
+            billetera.saldo += monto
+            billetera.save()
             
-            return Response({
-                "detail": f"Depósito exitoso en tu cuenta de {billetera.moneda}."
-            }, status=status.HTTP_200_OK)
-
-        except Exception as e:
-            return Response({
-                "detail": f"Hubo un error en el servidor, lo sentimos: {str(e)}"
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
+            Transtaction.objects.create(
+                wallet_origen=None,
+                walle_destino=billetera,
+                monto=monto
+            )
+        
+        return Response(
+            {"detail": f"Depósito exitoso en tu cuenta de {billetera.moneda}."}, 
+            status=status.HTTP_200_OK
+        )
 # ==========================================
 # RETIRAR DINERO HACIA FUERA DEL SISTEMA
 # ==========================================
@@ -252,57 +223,35 @@ class RetiroMoneyView(APIView):
     permission_classes = [IsAuthenticated]
     
     def post(self, request):
-        # 1. Cargamos la billetera del usuario
         wallet_origen = Wallet.objects.filter(user=request.user).select_related('user').first()
-        
         if not wallet_origen:
             return Response({
-                "detail": "El usuario no posee una billetera activa."
-            }, status=status.HTTP_404_NOT_FOUND)
-        
-        monto_raw = request.data.get('monto')
-        
-        # 2. Validación de formato numérico decimal
-        try:
-            monto = Decimal(str(monto_raw))
-        except (TypeError, ValueError):
-            return Response({
-                "detail": "Formato de monto inválido"
-            }, status=status.HTTP_400_BAD_REQUEST)
+                "detail":"No posee billetera activa"
+            },status=status.HTTP_404_NOT_FOUND)
             
-        # 3. El monto a retirar no puede ser cero ni negativo
-        if monto <= 0:
-            return Response({
-                "detail": "El monto debe ser mayor a cero"
-            }, status=status.HTTP_400_BAD_REQUEST) 
-            
-        # 4. Control estricto de fondos disponibles
+
+        serializer = RetiroSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        monto = serializer.validated_data['monto']
+
+
         if monto > wallet_origen.saldo:
             return Response({
-                "detail": "Fondos insuficientes para realizar el retiro"
-            }, status=status.HTTP_400_BAD_REQUEST)
+                "detail":"Fondos insuficientes"
+            },status=status.HTTP_400_BAD_REQUEST)
+        
+        with transaction.atomic():
+            wallet_origen.saldo -= monto
+            wallet_origen.save()
             
-        try:
-            # Impactamos los cambios de forma atómica
-            with transaction.atomic():
-                wallet_origen.saldo -= monto
-                wallet_origen.save()
-                
-                # Registramos el retiro (walle_destino queda en None porque sale del ecosistema)
-                Transtaction.objects.create(
-                    wallet_origen=wallet_origen,
-                    walle_destino=None,
-                    monto=monto
-                )
-                
-                return Response({
-                    "detail": "Retiro procesado de forma correcta"
-                }, status=status.HTTP_200_OK)
-                
-        except Exception as e:
-            return Response({
-                "detail": f"El servidor falló, lo sentimos: {str(e)}"
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            Transtaction.objects.create(
+                wallet_origen=wallet_origen,
+                walle_destino=None,
+                monto=monto
+            )
+            
+        return Response({"detail":"Retiro procesado"},status=status.HTTP_200_OK)
+            
 # ==========================================
 # CONSULTA COMPLETA DEL ESTADO DE LA BILLETERA
 # ==========================================
@@ -323,6 +272,3 @@ class MiBilleteraView(APIView):
         
         # 3. Retornamos los datos limpios estructurados hacia el cliente
         return Response(serializer.data, status=status.HTTP_200_OK)
-    
-    
-    

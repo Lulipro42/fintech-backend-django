@@ -2,7 +2,7 @@ from rest_framework import serializers
 from django.db.models import Q
 from django.contrib.auth.models import User
 from .models import Profile, Transtaction,Wallet
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 class UserSerializer(serializers.ModelSerializer): # Today create a new serializer for my new project
     
@@ -116,3 +116,27 @@ class WalletSerializer(serializers.ModelSerializer):
     class Meta:
         model = Wallet
         fields = ['usuario', 'saldo','cvu','alias','moneda']
+        
+
+
+class DepostivoSerializer(serializers.Serializer):
+    # Definimos los campos que esperamos recibir
+    monto = serializers.DecimalField(max_digits=15, decimal_places=2, required=True)
+    
+    
+    def validate_monto(self, value):
+        # Aquí movemos toda la lógica de validación de negocio
+        if value <= 0:
+            raise serializers.ValidationError("El monto debe ser mayor a cero")
+        return value
+
+class RetiroSerializer(serializers.Serializer):
+    
+    monto = serializers.DecimalField(max_digits=15, decimal_places=2, required=True)
+    
+    def validate_monto(self, value):
+        if value <=0:
+            raise serializers.ValidationError("El monto debe ser mayor a cero.")
+        return value
+
+

@@ -43,6 +43,7 @@ class Wallet(models.Model):
             for intento in range(5):
                 candidato = ".".join(random.sample(palabras_semilla, k=3))
                 existe = Wallet.objects.filter(alias=candidato).exists()
+                
                 if not existe:
                     alias_generado = candidato
                     break
@@ -80,6 +81,7 @@ class Transtaction(models.Model):
         origen = self.wallet_origen.user.username if self.wallet_origen else "Deposito externo"
         destino = self.walle_destino.user.username if self.walle_destino else "Retiro Externo"
         return f"Transacción de ${self.monto} ({origen} -> {destino})"
+    
     
     
 class Profile(models.Model):
