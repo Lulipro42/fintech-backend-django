@@ -31,6 +31,6 @@ jobs:
         DJANGO_SECRET_KEY: ${{ secrets.DJANGO_SECRET_KEY }}
         DJANGO_DEBUG: ${{ secrets.DJANGO_DEBUG }}
       run: |
-        cd Back-end
+        cd backend
         # Le decimos a Django que use el settings_test.py
         python manage.py test --settings=core.settings_test
