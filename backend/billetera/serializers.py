@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from django.db.models import Q
 from django.contrib.auth.models import User
-from .models import Profile, Transtaction,Wallet
+from .models import Profile, Transaction,Wallet
 from decimal import Decimal, InvalidOperation
 
 class UserSerializer(serializers.ModelSerializer): # Today create a new serializer for my new project
@@ -57,7 +57,7 @@ class TransactionSerializer(serializers.ModelSerializer):
     idempotency_key = serializers.UUIDField(required=False)
     
     class Meta:
-        model = Transtaction
+        model = Transaction
         fields = ['monto', 'destino', 'idempotency_key']
     
     def validate(self, data):
@@ -104,7 +104,7 @@ class TransactionHistorialSerializer(serializers.ModelSerializer):
     walle_destino = serializers.SlugRelatedField(read_only=True,slug_field='user__username')
     
     class Meta:
-        model = Transtaction
+        model = Transaction
         fields = ['id','monto','wallet_origen','walle_destino','fecha']
         
         

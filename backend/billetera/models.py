@@ -60,30 +60,37 @@ class Wallet(models.Model):
         return f"Billetera de {self.user.username} ({self.moneda})"
             
 
-class Transtaction(models.Model):
-    # 1. Billetera de origen (el que manda). Si se borra la billetera, no queremos borrar el historial, ponemos SET_NULL.
-    # Como tenemos dos ForeignKey apuntando al mismo modelo (Wallet), Django te obliga a poner related_name distintos.
-    wallet_origen = models.ForeignKey(Wallet, on_delete=models.SET_NULL, null=True, db_index=True,related_name='transferencia_enviadas')
+class Transaction(models.Model):
+    # 1. Billetera de origen
+    wallet_origen = models.ForeignKey(Wallet, on_delete=models.SET_NULL, null=True, db_index=True, related_name='transferencia_enviadas')
     
-    # 2. Billetera de destino (el que recibe). Completá la ForeignKey igual que la de arriba pero cambiá el related_name.
-    walle_destino = models.ForeignKey(Wallet, on_delete=models.SET_NULL, null=True,db_index=True, related_name='transferencia_recibidas')
+    # 2. Billetera de destino (Corregido 'wallet_destino' para mantener consistencia)
+    wallet_destino = models.ForeignKey(Wallet, on_delete=models.SET_NULL, null=True, db_index=True, related_name='transferencia_recibidas')
     
-    # 3. El monto transferido. Poné un DecimalField igual que el saldo de la billetera.
+    # 3. El monto transferido
     monto = models.DecimalField(max_digits=12, decimal_places=2)
     
-    # 4. Fecha de la transacciónd
+    # 4. Fecha de la transacción
     fecha = models.DateTimeField(auto_now_add=True)    
     
+    # (Corregido: Se quitó max_length porque UUIDField no lo lleva)
     idempotency_key = models.UUIDField(unique=True, null=True, blank=True)
     
-            
     def __str__(self) -> str:
         origen = self.wallet_origen.user.username if self.wallet_origen else "Deposito externo"
-        destino = self.walle_destino.user.username if self.walle_destino else "Retiro Externo"
+        destino = self.wallet_destino.user.username if self.wallet_destino else "Retiro Externo"
         return f"Transacción de ${self.monto} ({origen} -> {destino})"
     
-    
-    
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['idempotency_key'],
+                name='unique_idempotency_key',
+                # (Corregido: Se quitó la 'n' intrusa de 'indempotency')
+                condition=models.Q(idempotency_key__isnull=False) 
+            )
+        ]
+
 class Profile(models.Model):
     # 1. Conexión 1 a 1 con el usuario nativo de Django. Si se borra el usuario, se borra el perfil.
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='perfil')

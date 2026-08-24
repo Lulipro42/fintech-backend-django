@@ -12,3 +12,5 @@ back-end/db.sqlite3
 .DS_Store
 .vscode/
 .env
+htmlcov/
+.coverage

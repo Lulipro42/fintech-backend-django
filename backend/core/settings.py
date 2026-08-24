@@ -2,6 +2,7 @@
 Django settings for core project.
 """
 import os
+import sys
 import environ
 from pathlib import Path
 
@@ -16,7 +17,6 @@ env = environ.Env(
 environ.Env.read_env(os.path.join(BASE_DIR, '.env'))
 
 # SECURITY WARNING: keep the secret key used in production secret!
-# 👈 CORREGIDO: Ahora sí lee del archivo de forma segura
 SECRET_KEY = env('DJANGO_SECRET_KEY')
 
 # SECURITY WARNING: don't run with debug turned on in production!
@@ -24,6 +24,8 @@ DEBUG = env('DJANGO_DEBUG')
 
 ALLOWED_HOSTS = []
 
+# Detectar si estamos corriendo tests
+TESTING = 'test' in sys.argv or 'pytest' in sys.modules
 
 # Application definition
 
@@ -40,6 +42,10 @@ INSTALLED_APPS = [
     'billetera',
 ]
 
+# Solo agregar debug_toolbar si NO estamos en tests
+if DEBUG and not TESTING:
+    INSTALLED_APPS.append('debug_toolbar')
+
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
@@ -49,6 +55,10 @@ MIDDLEWARE = [
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
+
+# Solo agregar middleware de debug_toolbar si NO estamos en tests
+if DEBUG and not TESTING:
+    MIDDLEWARE.insert(1, 'debug_toolbar.middleware.DebugToolbarMiddleware')
 
 ROOT_URLCONF = 'core.urls'
 
@@ -69,12 +79,11 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'core.wsgi.application'
 
-
 # Database
-# 👈 CORREGIDO: Apunta a los nombres de las variables del .env, no a los valores fijos
+# Database
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.mysql',
+        'ENGINE': 'django.db.backends.postgresql',
         'NAME': env('DB_NAME'),
         'USER': env('DB_USER'),
         'PASSWORD': env('DB_PASSWORD'),
@@ -82,7 +91,6 @@ DATABASES = {
         'PORT': env('DB_PORT'),
     }
 }
-
 # Password validation
 AUTH_PASSWORD_VALIDATORS = [
     {
@@ -99,7 +107,6 @@ AUTH_PASSWORD_VALIDATORS = [
     },
 ]
 
-
 # Internationalization
 LANGUAGE_CODE = 'en-us'
 TIME_ZONE = 'UTC'
@@ -115,9 +122,9 @@ REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
         'rest_framework_simplejwt.authentication.JWTAuthentication',
     ),
-    'EXCEPTION_HANDLER':'billetera.exceptions.custom_exception_handler',
+    'EXCEPTION_HANDLER': 'billetera.exceptions.custom_exception_handler',
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
-    'DEFAULT_THROTTLE_RATES':{
+    'DEFAULT_THROTTLE_RATES': {
         'user': '10/minute',
     },
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
@@ -130,8 +137,6 @@ SPECTACULAR_SETTINGS = {
     'VERSION': '1.0.0',
 }
 
-
-
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
@@ -142,6 +147,15 @@ LOGGING = {
     },
     'root': {
         'handlers': ['console'],
-        'level': 'INFO',  # Podés cambiar a 'DEBUG' si necesitas más detalle
+        'level': 'INFO',
     },
+}
+
+INTERNAL_IPS = ["127.0.0.1", "10.0.2.2", "192.168.1.1"]
+
+def show_toolbar(request):
+    return True
+
+DEBUG_TOOLBAR_CONFIG = {
+    "SHOW_TOOLBAR_CALLBACK": show_toolbar,
 }

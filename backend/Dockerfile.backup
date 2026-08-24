@@ -1,0 +1,34 @@
+# Etapa 1: Builder (compila dependencias)
+FROM python:3.11-slim AS builder
+
+WORKDIR /app
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN pip install --user --no-cache-dir -r requirements.txt
+
+# Etapa 2: Runtime (solo lo necesario)
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Copiar dependencias compiladas desde builder
+COPY --from=builder /root/.local /root/.local
+ENV PATH=/root/.local/bin:$PATH
+
+# Copiar solo el código fuente
+COPY . .
+
+# No root por seguridad
+RUN useradd -m appuser && chown -R appuser:appuser /app
+USER appuser
+
+EXPOSE 8000
+
+CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--workers", "4", "config.wsgi:application"]
