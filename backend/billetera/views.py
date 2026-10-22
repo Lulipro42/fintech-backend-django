@@ -18,11 +18,6 @@ import logging
 import json
 import time
 
-
-
-
-
-
 # Create your views here.
 # ==========================================
 # REGISTRO DE USUARIO, PERFIL Y BILLETERA
@@ -94,8 +89,8 @@ class SaldoWalletView(APIView):
 # ==========================================
 
 class TransferenciaView(APIView):
-    #permission_classes = [IsAuthenticated]
-    #throttle_classes = [UserRateThrottle]
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [UserRateThrottle]
 
     def post(self, request):
         start_time = time.time()
@@ -105,16 +100,10 @@ class TransferenciaView(APIView):
         billetera_destino = None
 
         try:
-            serializer = TransactionSerializer(data=request.data, context={'request': request})
-            serializer.is_valid(raise_exception=True)
-
-            monto = serializer.validated_data.get('monto')
-            billetera_destino_id = serializer.validated_data.get('billetera_destino').id
-            idempotency_key = serializer.validated_data.get('idempotency_key')
-
-            # Obtener ID de la billetera origen del usuario autenticado
+            # CAMBIO: chequear la wallet origen ANTES de correr el serializer,
+            # así el 404 se devuelve antes de que el serializer intente usarla.
             billetera_origen_id = Wallet.objects.filter(user=request.user).values_list('id', flat=True).first()
-            
+
             if not billetera_origen_id:
                 status_log = "error"
                 error_log = "Usuario sin billetera"
@@ -123,58 +112,65 @@ class TransferenciaView(APIView):
                     status=status.HTTP_404_NOT_FOUND
                 )
 
+            serializer = TransactionSerializer(data=request.data, context={'request': request})
+            serializer.is_valid(raise_exception=True)
+
+            monto = serializer.validated_data.get('monto')
+            billetera_destino_id = serializer.validated_data.get('billetera_destino').id
+            idempotency_key = serializer.validated_data.get('idempotency_key')
+
             with transaction.atomic():
-                # Bloqueo ordenado por ID para evitar deadlock
-                wallet_ids = sorted([billetera_origen_id, billetera_destino_id])
-                wallets = list(Wallet.objects.select_for_update().filter(id__in=wallet_ids).order_by('id'))
+                    # Bloqueo ordenado por ID para evitar deadlock
+                    wallet_ids = sorted([billetera_origen_id, billetera_destino_id])
+                    wallets = list(Wallet.objects.select_for_update().filter(id__in=wallet_ids).order_by('id'))
 
-                if len(wallets) != 2:
-                    raise ValidationError("Las billeteras no son válidas")
+                    if len(wallets) != 2:
+                        raise ValidationError("Las billeteras no son válidas")
 
-                wallet_a, wallet_b = wallets
+                    wallet_a, wallet_b = wallets
                 
-                if wallet_a.id == billetera_origen_id:
-                    billetera_origen = wallet_a
-                    billetera_destino = wallet_b
-                else:
-                    billetera_origen = wallet_b
-                    billetera_destino = wallet_a
+                    if wallet_a.id == billetera_origen_id:
+                        billetera_origen = wallet_a
+                        billetera_destino = wallet_b
+                    else:
+                        billetera_origen = wallet_b
+                        billetera_destino = wallet_a
 
-                # Idempotencia: intentar crear, si existe → ya procesado
-                if idempotency_key:
-                    try:
+                    # Idempotencia: intentar crear, si existe → ya procesado
+                    if idempotency_key:
+                        try:
+                            Transaction.objects.create(
+                                wallet_origen=billetera_origen,
+                                wallet_destino=billetera_destino,
+                                monto=monto,
+                                idempotency_key=idempotency_key,
+                            )
+                        except IntegrityError:
+                            status_log = "idempotencia"
+                            error_log = "Transferencia ya procesada"
+                            return Response(
+                                {"detail": "Transferencia ya procesada anteriormente"},
+                                status=status.HTTP_200_OK)
+                    else:
                         Transaction.objects.create(
                             wallet_origen=billetera_origen,
                             wallet_destino=billetera_destino,
                             monto=monto,
-                            idempotency_key=idempotency_key,
                         )
-                    except IntegrityError:
-                        status_log = "idempotencia"
-                        error_log = "Transferencia ya procesada"
-                        return Response(
-                            {"detail": "Transferencia ya procesada anteriormente"},
-                            status=status.HTTP_200_OK)
-                else:
-                    Transaction.objects.create(
-                        wallet_origen=billetera_origen,
-                        wallet_destino=billetera_destino,
-                        monto=monto,
-                    )
 
-                if billetera_origen.saldo < monto:
-                    raise ValidationError("Fondos insuficientes")
+                    if billetera_origen.saldo < monto:
+                        raise ValidationError("Fondos insuficientes")
 
-                billetera_origen.saldo -= monto
-                billetera_destino.saldo += monto
+                    billetera_origen.saldo -= monto
+                    billetera_destino.saldo += monto
                 
-                billetera_origen.save(update_fields=['saldo'])
-                billetera_destino.save(update_fields=['saldo'])
+                    billetera_origen.save(update_fields=['saldo'])
+                    billetera_destino.save(update_fields=['saldo'])
 
-            return Response(
-                {"detail": "Transferencia procesada con éxito"},
-                status=status.HTTP_200_OK
-            )
+                    return Response(
+                        {"detail": "Transferencia procesada con éxito"},
+                        status=status.HTTP_200_OK
+                    )
 
         except Exception as e:
             status_log = "error"
@@ -252,7 +248,7 @@ class DepostivoView(APIView):
             
             Transaction.objects.create(
                 wallet_origen=None,
-                walle_destino=billetera,
+                wallet_destino=billetera,
                 monto=monto
             )
         
@@ -294,14 +290,14 @@ class RetiroMoneyView(APIView):
             
             Transaction.objects.create(
                 wallet_origen=wallet_origen,
-                walle_destino=None,
+                wallet_destino=None,
                 monto=monto
             )
             
         return Response({"detail":"Retiro procesado"},status=status.HTTP_200_OK)
 
 
-# ==========================================
+# ========================================== 
 # CONSULTA COMPLETA DEL ESTADO DE LA BILLETERA
 # ==========================================
 class MiBilleteraView(APIView):

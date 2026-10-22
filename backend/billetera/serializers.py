@@ -76,8 +76,8 @@ class TransactionSerializer(serializers.ModelSerializer):
         billetera_origen = Wallet.objects.filter(user=usuario).first()
         
         # 5. Evitamos que se transfiera a sí mismo (comparando los objetos)
-        if billetera_origen == billetera:
-            raise serializers.ValidationError("No podés transferirte a vos mismo.")
+        if billetera_origen is None:
+            raise serializers.ValidationError("El usuario no posee una billetera activa")
         
         # 6. Control de saldo
         monto = data.get('monto')
@@ -101,7 +101,7 @@ class TransactionHistorialSerializer(serializers.ModelSerializer):
     """
     # SlugRelatedField nos permite mostrar un atributo del objeto relacionado (el username del dueño) en lugar de su ID numérico
     wallet_origen = serializers.SlugRelatedField(read_only=True, slug_field='user__username')
-    walle_destino = serializers.SlugRelatedField(read_only=True,slug_field='user__username')
+    wallet_destino = serializers.SlugRelatedField(read_only=True,slug_field='user__username')
     
     class Meta:
         model = Transaction

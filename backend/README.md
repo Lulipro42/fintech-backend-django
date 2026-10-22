@@ -23,7 +23,7 @@ Backend de una billetera digital que permite a usuarios registrarse, mantener sa
 |---|---|
 | Lenguaje | Python 3.11 |
 | Framework | Django 5.x + Django REST Framework |
-| Base de datos | MySQL |
+| Base de datos | PostgreSQL |
 | Autenticación | SimpleJWT |
 | Documentación | drf-spectacular (Swagger / Redoc) |
 | Infraestructura | Docker / Docker Compose |

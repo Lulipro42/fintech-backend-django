@@ -1,18 +1,14 @@
-# Primero definimos las variables que Django va a buscar sí o sí
 import os
-os.environ['DB_NAME'] = 'dummy'
-os.environ['DB_USER'] = 'dummy'
-os.environ['DB_PASSWORD'] = 'dummy'
-os.environ['DB_HOST'] = 'dummy'
-os.environ['DB_PORT'] = 'dummy'
-
-# Ahora importamos todo lo demás
 from .settings import *
 
-# Y finalmente sobrescribimos la base de datos con SQLite
+
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': os.environ.get('DB_NAME', 'fintech_db'),
+        'USER': os.environ.get('DB_USER', 'root'),
+        'PASSWORD': os.environ.get('DB_PASSWORD'),
+        'HOST': os.environ.get('DB_HOST', 'db'),
+        'PORT': os.environ.get('DB_PORT', '5432'),
     }
 }

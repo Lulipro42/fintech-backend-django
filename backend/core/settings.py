@@ -1,6 +1,3 @@
-"""
-Django settings for core project.
-"""
 import os
 import sys
 import environ
