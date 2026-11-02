@@ -3,10 +3,18 @@ from decimal import Decimal
 from django.test import TransactionTestCase
 from django.contrib.auth.models import User
 from django.db import connection
-
+from django.test import RequestFactory,override_settings
+from rest_framework.test import force_authenticate
+from billetera.views import TransferenciaView
 from billetera.models import Wallet, Transaction
 
-
+from uuid import uuid4
+@override_settings(
+    REST_FRAMEWORK={
+        'DEFAULT_THROTTLE_CLASSES': [],
+        'DEFAULT_THROTTLE_RATES': {},
+    }
+)
 class TransferenciaConcurrenciaTest(TransactionTestCase):
     """
     Tests de concurrencia para transferencias entre wallets.
@@ -25,37 +33,34 @@ class TransferenciaConcurrenciaTest(TransactionTestCase):
 
     def _transferir(self, origen_id, destino_id, monto):
         """Helper que simula una transferencia llamando a la vista directamente."""
-        from django.test import RequestFactory
-        from rest_framework.test import force_authenticate
-        from billetera.views import TransferenciaView
 
-        factory = RequestFactory()
+        try:
+            factory = RequestFactory()
+            wallet_destino = Wallet.objects.get(id=destino_id)
+            destino_str = wallet_destino.alias
 
-        wallet_destino = Wallet.objects.get(id=destino_id)
-        destino_str = wallet_destino.alias
+            data = {
+                'destino': destino_str,
+                'monto': str(monto),
+            }
 
-        data = {
-            'destino': destino_str,
-            'monto': str(monto),
-        }
+            user = Wallet.objects.get(id=origen_id).user
 
-        # CAMBIO: resolver el usuario dueño de la wallet origen dinámicamente,
-        # en vez de asumir que solo existen wallet_a y wallet_b.
-        user = Wallet.objects.get(id=origen_id).user
+            request = factory.post('/api/transferir/', data, content_type='application/json')
+            force_authenticate(request, user=user)
 
-        request = factory.post('/api/transferir/', data, content_type='application/json')
-        force_authenticate(request, user=user)
+            view = TransferenciaView.as_view()
+            response = view(request)
 
-        view = TransferenciaView.as_view()
-        response = view(request)
-
-        return {
-            'status_code': response.status_code,
-            'data': response.data,
-            'origen': origen_id,
-            'destino': destino_id,
-            'monto': monto,
-        }
+            return {
+                'status_code': response.status_code,
+                'data': response.data,
+                'origen': origen_id,
+                'destino': destino_id,
+                'monto': monto,
+            }
+        finally:
+            connection.close_all()
 
     def test_transferencias_cruzadas_sin_deadlock(self):
         """
@@ -71,11 +76,9 @@ class TransferenciaConcurrenciaTest(TransactionTestCase):
 
         tareas = []
 
-        # 10 transferencias A→B
         for _ in range(num_transferencias):
             tareas.append((self.wallet_a.id, self.wallet_b.id, monto))
 
-        # 10 transferencias B→A
         for _ in range(num_transferencias):
             tareas.append((self.wallet_b.id, self.wallet_a.id, monto))
 
@@ -94,9 +97,6 @@ class TransferenciaConcurrenciaTest(TransactionTestCase):
                     resultados.append(resultado)
                 except Exception as e:
                     errores.append(str(e))
-
-        # Cerrar conexiones de los hilos
-        connection.close()
 
         # Refrescar wallets desde DB
         self.wallet_a.refresh_from_db()
@@ -118,16 +118,16 @@ class TransferenciaConcurrenciaTest(TransactionTestCase):
         saldo_total = self.wallet_a.saldo + self.wallet_b.saldo
         self.assertEqual(saldo_total, Decimal('2000.00'))
 
-        # ASSERT 4: Algunas transferencias tuvieron éxito
+
         exitosos = [r for r in resultados if r['status_code'] == 200]
-        self.assertGreater(len(exitosos), 0, "Ninguna transferencia tuvo éxito")
+        self.assertEqual(len(exitosos), 20, f"Se esperaban 20 éxitos, pero hubo {len(exitosos)}")
+
 
     def test_idempotencia_concurrente(self):
         """
         Dos threads intentan la misma transferencia con la misma idempotency_key.
         Solo una debe tener éxito, la otra debe recibir "ya procesada".
         """
-        from uuid import uuid4
 
         idempotency_key = str(uuid4())
         monto = Decimal('10.00')
@@ -148,7 +148,6 @@ class TransferenciaConcurrenciaTest(TransactionTestCase):
             for futuro in as_completed(futuros):
                 resultados.append(futuro.result(timeout=30))
 
-        connection.close()
 
         # Refrescar
         self.wallet_a.refresh_from_db()
@@ -168,9 +167,6 @@ class TransferenciaConcurrenciaTest(TransactionTestCase):
 
     def _transferir_con_idempotencia(self, origen_id, destino_id, monto, idempotency_key):
         """Helper con idempotency_key."""
-        from django.test import RequestFactory
-        from rest_framework.test import force_authenticate
-        from billetera.views import TransferenciaView
 
         factory = RequestFactory()
 
@@ -183,7 +179,6 @@ class TransferenciaConcurrenciaTest(TransactionTestCase):
             'idempotency_key': idempotency_key,
         }
 
-        # CAMBIO: mismo fix que en _transferir
         user = Wallet.objects.get(id=origen_id).user
 
         request = factory.post('/api/transferir/', data, content_type='application/json')
@@ -222,10 +217,6 @@ class TransferenciaConcurrenciaTest(TransactionTestCase):
         """
         user_sin_wallet = User.objects.create_user(username='user_c', password='test123')
 
-        from django.test import RequestFactory
-        from rest_framework.test import force_authenticate
-        from billetera.views import TransferenciaView
-
         factory = RequestFactory()
         data = {
             'destino': self.wallet_b.alias,
@@ -247,7 +238,7 @@ class TransferenciaConcurrenciaTest(TransactionTestCase):
         Un reintento posterior con la MISMA key y un monto válido debe poder
         procesarse con éxito (no debe devolver falsamente "ya procesada").
         """
-        from uuid import uuid4
+        
         idempotency_key = str(uuid4())
 
         # Primer intento: monto excesivo, debe fallar
@@ -293,7 +284,6 @@ class TransferenciaConcurrenciaTest(TransactionTestCase):
             for futuro in as_completed(futuros):
                 resultados.append(futuro.result(timeout=30))
 
-        connection.close()
         wallet_origen.refresh_from_db()
 
         exitosos = [r for r in resultados if r['status_code'] == 200]
@@ -330,7 +320,7 @@ class TransferenciaConcurrenciaTest(TransactionTestCase):
             ]
             resultados = [f.result(timeout=30) for f in as_completed(futuros)]
 
-        connection.close()
+
         self.wallet_b.refresh_from_db()
 
         exitosos = [r for r in resultados if r['status_code'] == 200]
