@@ -2,7 +2,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from decimal import Decimal
 from django.test import TransactionTestCase
 from django.contrib.auth.models import User
-from django.db import connection
+from django.db import connections
 from django.test import RequestFactory,override_settings
 from rest_framework.test import force_authenticate
 from billetera.views import TransferenciaView
@@ -60,7 +60,7 @@ class TransferenciaConcurrenciaTest(TransactionTestCase):
                 'monto': monto,
             }
         finally:
-            connection.close_all()
+            connections.close_all()
 
     def test_transferencias_cruzadas_sin_deadlock(self):
         """
@@ -168,30 +168,31 @@ class TransferenciaConcurrenciaTest(TransactionTestCase):
     def _transferir_con_idempotencia(self, origen_id, destino_id, monto, idempotency_key):
         """Helper con idempotency_key."""
 
-        factory = RequestFactory()
+        try:
+            factory = RequestFactory()
+            wallet_destino = Wallet.objects.get(id=destino_id)
+            destino_str = wallet_destino.alias
 
-        wallet_destino = Wallet.objects.get(id=destino_id)
-        destino_str = wallet_destino.alias
+            data = {
+                'destino': destino_str,
+                'monto': str(monto),
+                'idempotency_key': idempotency_key,
+            }
 
-        data = {
-            'destino': destino_str,
-            'monto': str(monto),
-            'idempotency_key': idempotency_key,
-        }
+            user = Wallet.objects.get(id=origen_id).user
 
-        user = Wallet.objects.get(id=origen_id).user
+            request = factory.post('/api/transferir/', data, content_type='application/json')
+            force_authenticate(request, user=user)
 
-        request = factory.post('/api/transferir/', data, content_type='application/json')
-        force_authenticate(request, user=user)
+            view = TransferenciaView.as_view()
+            response = view(request)
 
-        view = TransferenciaView.as_view()
-        response = view(request)
-
-        return {
-            'status_code': response.status_code,
-            'data': response.data,
-        }
-        
+            return {
+                'status_code': response.status_code,
+                'data': response.data,
+            }
+        finally:
+            connections.close_all()
         
     def test_fondos_insuficientes(self):
         """
