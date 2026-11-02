@@ -117,13 +117,22 @@ class TransferenciaView(APIView):
             billetera_destino_id = serializer.validated_data.get('billetera_destino').id
             idempotency_key = serializer.validated_data.get('idempotency_key')
 
+            if billetera_origen_id == billetera_destino_id:
+                status_log = "error"
+                error_log = "Autotransferencia no permitida"
+                return Response(
+                    {"error": True, "message": "No se puede realizar una transferencia a tu propia cuenta", "code": 400},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+                
             with transaction.atomic():
                     # Bloqueo ordenado por ID para evitar deadlock
                     wallet_ids = sorted([billetera_origen_id, billetera_destino_id])
                     wallets = list(Wallet.objects.select_for_update().filter(id__in=wallet_ids).order_by('id'))
-
+                    
                     if len(wallets) != 2:
-                        raise ValidationError("Las billeteras no son válidas")
+                        return ValidationError("Las billeteras no son validas")
+                    
 
                     wallet_a, wallet_b = wallets
                 
@@ -149,7 +158,7 @@ class TransferenciaView(APIView):
                                 
                         except IntegrityError:
                             transaccion_vieja = Transaction.objects.filter(wallet_origen=billetera_origen, idempotency_key=idempotency_key).select_for_update().first()                            
-                            
+
                             if transaccion_vieja is None:
                                 raise
                             
@@ -241,7 +250,7 @@ class DepostivoView(APIView):
         
         serializer = DepostivoSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        monto = serializer.validated_data['monto']
+        monto = serializer.validated_data['saldo']
 
         with transaction.atomic():    
             billetera = Wallet.objects.filter(user=request.user).select_for_update().first()
@@ -290,7 +299,7 @@ class RetiroMoneyView(APIView):
                 }, status=status.HTTP_400_BAD_REQUEST)
 
             wallet_origen.saldo -= monto
-            wallet_origen.save(update_fields=['monto'])
+            wallet_origen.save(update_fields=['saldo'])
             
             Transaction.objects.create(
                 wallet_origen=wallet_origen,

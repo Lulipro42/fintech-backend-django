@@ -7,7 +7,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 # Inicializamos django-environ
 env = environ.Env(
-    DEBUG=(bool, False)
+    DJANGO_DEBUG=(bool, False)
 )
 
 # 👈 CLAVE: Leemos el archivo .env desde la raíz del proyecto

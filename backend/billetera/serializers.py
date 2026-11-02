@@ -100,13 +100,22 @@ class TransactionHistorialSerializer(serializers.ModelSerializer):
     Muestra los movimientos históricos en formato de texto limpio.
     """
     # SlugRelatedField nos permite mostrar un atributo del objeto relacionado (el username del dueño) en lugar de su ID numérico
-    wallet_origen = serializers.SlugRelatedField(read_only=True, slug_field='user__username')
-    wallet_destino = serializers.SlugRelatedField(read_only=True,slug_field='user__username')
+    wallet_origen = serializers.SerializerMethodField()
+    wallet_destino = serializers.SerializerMethodField()
     
     class Meta:
         model = Transaction
         fields = ['id','monto','wallet_origen','wallet_destino','fecha']
-        
+    
+    def get_wallet_origen(self, obj):
+        if obj.wallet_origen and obj.wallet_origen.user:
+            return obj.wallet_origen.user.username
+        return None
+    def get_wallet_destino(self, obj):
+
+        if obj.wallet_destino and obj.wallet_destino.user:
+            return obj.wallet_destino.user.username
+        return None
         
 
 class WalletSerializer(serializers.ModelSerializer):

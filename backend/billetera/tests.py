@@ -5,7 +5,7 @@ from django.contrib.auth.models import User
 from django.db import connections
 from django.test import RequestFactory,override_settings
 from rest_framework.test import force_authenticate
-from billetera.views import TransferenciaView
+from billetera.views import TransferenciaView, DepostivoView
 from billetera.models import Wallet, Transaction
 
 from uuid import uuid4
@@ -16,11 +16,6 @@ from uuid import uuid4
     }
 )
 class TransferenciaConcurrenciaTest(TransactionTestCase):
-    """
-    Tests de concurrencia para transferencias entre wallets.
-    Usa TransactionTestCase porque TestCase envuelve en savepoint
-    que no son visibles para otros hilos.
-    """
 
     def setUp(self):
         # Crear usuarios
@@ -63,14 +58,6 @@ class TransferenciaConcurrenciaTest(TransactionTestCase):
             connections.close_all()
 
     def test_transferencias_cruzadas_sin_deadlock(self):
-        """
-        Smoke test de concurrencia para transferencias cruzadas.
-    
-        Verifica que el sistema no falle bajo carga concurrente (20 threads).
-        La correctitud del bloqueo ordenado por ID se validó manualmente:
-        - Sin select_for_update(): deadlocks observados en desarrollo
-        - Con select_for_update(): sin deadlocks, saldo se conserva
-        """ 
         monto = Decimal('10.00')
         num_transferencias = 10
 
@@ -124,11 +111,6 @@ class TransferenciaConcurrenciaTest(TransactionTestCase):
 
 
     def test_idempotencia_concurrente(self):
-        """
-        Dos threads intentan la misma transferencia con la misma idempotency_key.
-        Solo una debe tener éxito, la otra debe recibir "ya procesada".
-        """
-
         idempotency_key = str(uuid4())
         monto = Decimal('10.00')
 
@@ -166,8 +148,6 @@ class TransferenciaConcurrenciaTest(TransactionTestCase):
         self.assertEqual(count, 1)
 
     def _transferir_con_idempotencia(self, origen_id, destino_id, monto, idempotency_key):
-        """Helper con idempotency_key."""
-
         try:
             factory = RequestFactory()
             wallet_destino = Wallet.objects.get(id=destino_id)
@@ -195,10 +175,6 @@ class TransferenciaConcurrenciaTest(TransactionTestCase):
             connections.close_all()
         
     def test_fondos_insuficientes(self):
-        """
-        Transferencia por un monto mayor al saldo disponible debe fallar
-        y no debe alterar los saldos ni crear una Transaction.
-        """
         monto = Decimal('9999.00')  # wallet_a tiene 1000.00
 
         resultado = self._transferir(self.wallet_a.id, self.wallet_b.id, monto)
@@ -212,10 +188,6 @@ class TransferenciaConcurrenciaTest(TransactionTestCase):
         self.assertEqual(Transaction.objects.count(), 0)
 
     def test_usuario_sin_billetera(self):
-        """
-        Un usuario autenticado que no tiene wallet asociada debe recibir 404,
-        no un 500 ni un intento fallido de transferencia.
-        """
         user_sin_wallet = User.objects.create_user(username='user_c', password='test123')
 
         factory = RequestFactory()
@@ -233,13 +205,6 @@ class TransferenciaConcurrenciaTest(TransactionTestCase):
         self.assertEqual(Transaction.objects.count(), 0)
 
     def test_reintento_tras_fondos_insuficientes_no_queda_bloqueado(self):
-        """
-        Si un intento con idempotency_key falla por fondos insuficientes,
-        el rollback de transaction.atomic() debe deshacer el registro creado.
-        Un reintento posterior con la MISMA key y un monto válido debe poder
-        procesarse con éxito (no debe devolver falsamente "ya procesada").
-        """
-        
         idempotency_key = str(uuid4())
 
         # Primer intento: monto excesivo, debe fallar
@@ -263,18 +228,12 @@ class TransferenciaConcurrenciaTest(TransactionTestCase):
         self.assertEqual(Transaction.objects.filter(idempotency_key=idempotency_key).count(), 1)
 
     def test_no_permite_saldo_negativo_bajo_concurrencia(self):
-        """
-        Test crítico: 20 threads intentan debitar de la MISMA wallet origen
-        en simultáneo, con saldo insuficiente para que todas tengan éxito.
-        El saldo final NUNCA debe quedar negativo, y la cantidad de
-        transferencias exitosas debe ser exactamente la que el saldo permite.
-        """
         wallet_origen = Wallet.objects.create(
             user=User.objects.create_user(username='user_saldo_limitado', password='test123'),
             saldo=Decimal('100.00')
         )
         monto = Decimal('10.00')
-        num_intentos = 20  # 20 * 10 = 200, pero solo hay 100 de saldo
+        num_intentos = 20 
 
         resultados = []
         with ThreadPoolExecutor(max_workers=20) as executor:
@@ -292,18 +251,20 @@ class TransferenciaConcurrenciaTest(TransactionTestCase):
 
         # Debe haber exactamente 10 éxitos (100 / 10) y 10 fallos por fondos insuficientes
         self.assertEqual(len(exitosos), 10, f"Se esperaban 10 éxitos, hubo {len(exitosos)}")
-        self.assertEqual(len(fallidos), 10)
+        self.assertEqual(len(fallidos), 10, f"Se esperaban 10 fallos 400, hubo {len(resultados) - len(exitorios)}")
 
+        for fallo in faliidos:
+            mensaje_error = str(fallo['data'])
+            self.assertIn("Fondos insuficientes", mensaje_error)
+            
         # El saldo nunca debe quedar negativo
         self.assertEqual(wallet_origen.saldo, Decimal('0.00'))
         self.assertGreaterEqual(wallet_origen.saldo, Decimal('0.00'))
 
     def test_transferencias_concurrentes_al_mismo_destino_no_pierden_updates(self):
         """
-        Valida que F() expressions en el destino (sin lock) no pierdan updates
-        cuando múltiples orígenes distintos transfieren al mismo destino
-        en simultáneo. Si hubiera un lost update, el saldo final sería menor
-        al esperado.
+        Verifica que múltiples transferencias concurrentes hacia un mismo destino 
+        utilizando select_for_update() no sufran pérdida de actualizaciones (lost updates).
         """
         monto = Decimal('10.00')
         num_origenes = 15
@@ -332,10 +293,6 @@ class TransferenciaConcurrenciaTest(TransactionTestCase):
         self.assertEqual(self.wallet_b.saldo, esperado)
 
     def test_monto_invalido_es_rechazado(self):
-        """
-        Montos negativos o cero deben ser rechazados por el serializer,
-        sin llegar a tocar la base de datos.
-        """
         for monto_invalido in [Decimal('0.00'), Decimal('-10.00')]:
             resultado = self._transferir(self.wallet_a.id, self.wallet_b.id, monto_invalido)
             self.assertEqual(resultado['status_code'], 400)
@@ -346,10 +303,6 @@ class TransferenciaConcurrenciaTest(TransactionTestCase):
         self.assertEqual(self.wallet_b.saldo, Decimal('1000.00'))
 
     def test_transaccion_registra_datos_correctos(self):
-        """
-        Verifica que la Transaction creada tenga wallet_origen, wallet_destino
-        y monto correctos (no solo que el status sea 200).
-        """
         monto = Decimal('50.00')
         resultado = self._transferir(self.wallet_a.id, self.wallet_b.id, monto)
 
@@ -361,11 +314,6 @@ class TransferenciaConcurrenciaTest(TransactionTestCase):
         self.assertEqual(tx.wallet_destino_id, self.wallet_b.id)
 
     def test_sin_idempotency_key_permite_transferencias_duplicadas(self):
-        """
-        Documenta el comportamiento esperado: sin idempotency_key, dos
-        transferencias idénticas consecutivas NO se deduplican (es decisión
-        del cliente mandar la key si quiere protección).
-        """
         monto = Decimal('10.00')
 
         r1 = self._transferir(self.wallet_a.id, self.wallet_b.id, monto)
@@ -379,3 +327,54 @@ class TransferenciaConcurrenciaTest(TransactionTestCase):
         self.assertEqual(Transaction.objects.filter(idempotency_key__isnull=True).count(), 2)
 
 
+class DepositoTest(TransactionTestCase):
+    def setUp(self) -> None:
+        self.user_a = User.objects.create_user(username='user_a', password='test_16')
+        self.user_b = User.objects.create_user(username='user_b', password='test_16')
+        
+        self.wallet_a = Wallet.objects.create(user=self.user_a, saldo=Decimal('1000.00'))
+        self.wallet_b = Wallet.objects.create(user=self.user_b, saldo=Decimal('1000.00'))
+        
+    def _depositar(self, user, monto): # 👈 1. Agregamos los parámetros user y monto aquí
+        try:
+            factory = RequestFactory()
+            
+            data = {
+                'monto': str(monto)
+            }
+            
+            # 👈 Asegúrate de que la ruta coincida con tu urls.py (ej: '/api/depositar/')
+            request = factory.post('/api/depositar/', data, content_type='application/json')
+            force_authenticate(request, user=user)
+            
+            view = DepositoView.as_view() # Ojo con el typo "DepostivoView" si lo tienes mal escrito arriba
+            response = view(request)
+            
+            return {
+                'status_code': response.status_code,
+                'data': response.data,
+            }
+        finally:
+            connections.close_all()
+
+    def test_deposito_exitoso(self):
+        monto_a_depositar = Decimal('500.00')
+        
+        resultado = self._depositar(self.user_a, monto_a_depositar)
+        
+        self.assertEqual(resultado['status_code'], 200)
+        
+        self.wallet_a.refresh_from_db()
+        self.assertEqual(self.wallet_a.saldo, Decimal('1500.00'))
+
+    def test_deposito_monto_invalido(self):
+        monto_a_depositar = Decimal('-100.00')
+        
+        resultado = self._depositar(self.user_a, monto_a_depositar)
+        
+        # Dependiendo de cómo valide tu serializer, un monto inválido suele dar 400 (Bad Request)
+        # Si tu API devuelve 400, ajústalo aquí:
+        self.assertEqual(resultado['status_code'], 400) 
+        
+        self.wallet_a.refresh_from_db()
+        self.assertEqual(self.wallet_a.saldo, Decimal('1000.00')) # 👈 Corregido a 2 decimales exactos
