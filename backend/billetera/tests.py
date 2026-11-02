@@ -5,7 +5,7 @@ from django.contrib.auth.models import User
 from django.db import connections
 from django.test import RequestFactory,override_settings
 from rest_framework.test import force_authenticate
-from billetera.views import TransferenciaView, DepostivoView
+from billetera.views import TransferenciaView, DepositoView
 from billetera.models import Wallet, Transaction
 
 from uuid import uuid4
@@ -253,7 +253,7 @@ class TransferenciaConcurrenciaTest(TransactionTestCase):
         self.assertEqual(len(exitosos), 10, f"Se esperaban 10 éxitos, hubo {len(exitosos)}")
         self.assertEqual(len(fallidos), 10, f"Se esperaban 10 fallos 400, hubo {len(resultados) - len(exitosos)}")
 
-        for fallo in faliidos:
+        for fallo in fallidos:
             mensaje_error = str(fallo['data'])
             self.assertIn("Fondos insuficientes", mensaje_error)
             

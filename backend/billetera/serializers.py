@@ -128,7 +128,7 @@ class WalletSerializer(serializers.ModelSerializer):
         
 
 
-class DepostivoSerializer(serializers.Serializer):
+class DepositoSerializer(serializers.Serializer):
     # Definimos los campos que esperamos recibir
     monto = serializers.DecimalField(max_digits=15, decimal_places=2, required=True)
     

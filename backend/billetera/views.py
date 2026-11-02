@@ -5,7 +5,7 @@ from rest_framework import status,response
 from django.db import transaction, IntegrityError  # Escudo protector para transacciones atómicas
 from .serializers import (
     UserSerializer, ProfileSerializer, TransactionSerializer, 
-    TransactionHistorialSerializer, WalletSerializer,DepostivoSerializer,RetiroSerializer
+    TransactionHistorialSerializer, WalletSerializer,DepositoSerializer,RetiroSerializer
 )
 from .models import Wallet, Transaction, Profile  # Mantenido 'Transtaction' según tu modelo
 from rest_framework.permissions import IsAuthenticated, AllowAny
@@ -243,12 +243,12 @@ class HistorialTransactionsView(APIView):
 # ==========================================
 # DEPOSITAR DINERO DESDE EL BANCO externos
 # ==========================================
-class DepostivoView(APIView):
+class DepositoView(APIView):
     permission_classes = [IsAuthenticated]
     
     def post(self, request):
         
-        serializer = DepostivoSerializer(data=request.data)
+        serializer = DepositoSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         monto = serializer.validated_data['saldo']
 
