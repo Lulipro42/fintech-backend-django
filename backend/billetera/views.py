@@ -174,7 +174,9 @@ class TransferenciaView(APIView):
                         )
                         
                     if billetera_origen.saldo < monto:
-                        raise ValidationError("Fondos insuficientes")
+                        status_log = "error"
+                        error_log = "Fondos insuficientes"
+                        return Response({"detail":"Fondos insuficientes"}, status=status.HTTP_400_BAD_REQUEST)
 
                     billetera_origen.saldo -= monto
                     billetera_destino.saldo += monto
