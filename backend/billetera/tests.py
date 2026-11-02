@@ -342,8 +342,7 @@ class DepositoTest(TransactionTestCase):
             data = {
                 'monto': str(monto)
             }
-            
-            # 👈 Asegúrate de que la ruta coincida con tu urls.py (ej: '/api/depositar/')
+        
             request = factory.post('/api/depositar/', data, content_type='application/json')
             force_authenticate(request, user=user)
             

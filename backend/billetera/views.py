@@ -1,22 +1,28 @@
-from django.shortcuts import render, redirect, get_object_or_404
-from rest_framework.views import APIView
-from rest_framework.response import Response
-from rest_framework import status,response
-from django.db import transaction, IntegrityError  # Escudo protector para transacciones atómicas
-from .serializers import (
-    UserSerializer, ProfileSerializer, TransactionSerializer, 
-    TransactionHistorialSerializer, WalletSerializer,DepositoSerializer,RetiroSerializer
-)
-from .models import Wallet, Transaction, Profile  # Mantenido 'Transtaction' según tu modelo
-from rest_framework.permissions import IsAuthenticated, AllowAny
-from decimal import Decimal
-from django.db.models import Q, F
-from django.core.exceptions import ValidationError
-from rest_framework.throttling import UserRateThrottle
-from rest_framework.pagination import PageNumberPagination
-import logging
 import json
+import logging
 import time
+from decimal import Decimal
+
+from django.core.exceptions import ValidationError
+from django.db import IntegrityError, transaction
+from django.db.models import Q
+from rest_framework import status
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+from rest_framework.throttling import UserRateThrottle
+from rest_framework.views import APIView
+from rest_framework.pagination import PageNumberPagination
+
+from .models import Profile, Transaction, Wallet
+from .serializers import (
+    DepositoSerializer,
+    ProfileSerializer,
+    RetiroSerializer,
+    TransactionHistorialSerializer,
+    TransactionSerializer,
+    UserSerializer,
+    WalletSerializer,
+)
 
 # Create your views here.
 # ==========================================
@@ -28,29 +34,23 @@ logger = logging.getLogger(__name__)
 class RegistroUsuarioView(APIView):
     def post(self, request):
         data_usuario = request.data
-        data_perfil = request.data.get('profile')  # Bloque de datos anidado para el perfil
-        
-        # Capturamos la moneda opcional que mande el cliente (si no manda nada, va 'ARS' por defecto)
+        data_perfil = request.data.get('profile')
         moneda_elegida = request.data.get('moneda', 'ARS')
         
-        # Activamos la transacción atómica: si algo falla adentro, no se crea nada en la DB
         try:
             with transaction.atomic():
-                # 1. Validamos y creamos el usuario base (encriptando contraseña)
                 seralizer_user = UserSerializer(data=data_usuario)
                 seralizer_user.is_valid(raise_exception=True)
                 usuario = seralizer_user.save()
             
-                # 2. Validamos y creamos el perfil asociado
                 seriliazer_perfil = ProfileSerializer(data=data_perfil)
                 seriliazer_perfil.is_valid(raise_exception=True)
                 perfil = seriliazer_perfil.save(user=usuario)
             
-                # 3. Creamos la billetera asignándole la moneda correspondiente
                 wallet = Wallet.objects.create(
                     user=usuario,
                     saldo=Decimal('0.00'),
-                    moneda=moneda_elegida  # Guarda la billetera en la moneda que corresponda
+                    moneda=moneda_elegida
                     )
             
                 return Response(
@@ -69,12 +69,9 @@ class SaldoWalletView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        # 1. Buscamos la billetera que le pertenece al usuario autenticado
         billetera = Wallet.objects.select_related('user').filter(user=request.user).first()
         
-        # 2. Validamos si el usuario realmente tiene una billetera asociada
         if billetera is not None:
-            # Si existe, devolvemos el saldo junto con su tipo de moneda
             return Response({
                 "saldo": billetera.saldo,
                 "moneda": billetera.moneda
@@ -131,7 +128,7 @@ class TransferenciaView(APIView):
                     wallets = list(Wallet.objects.select_for_update().filter(id__in=wallet_ids).order_by('id'))
                     
                     if len(wallets) != 2:
-                        return ValidationError("Las billeteras no son validas")
+                        raise ValidationError("Las billeteras no son validas")
                     
 
                     wallet_a, wallet_b = wallets
@@ -157,7 +154,7 @@ class TransferenciaView(APIView):
                                 )
                                 
                         except IntegrityError:
-                            transaccion_vieja = Transaction.objects.filter(wallet_origen=billetera_origen, idempotency_key=idempotency_key).select_for_update().first()                            
+                            transaccion_vieja = Transaction.objects.filter(wallet_origen=billetera_origen, idempotency_key=idempotency_key).select_for_update().first()                    
 
                             if transaccion_vieja is None:
                                 raise
@@ -217,7 +214,6 @@ class HistorialTransactionsView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        # 1. Buscamos la billetera del usuario logueado
         billetera_usuario = Wallet.objects.filter(user=request.user).first() 
         if not billetera_usuario:
             return Response({
@@ -227,7 +223,7 @@ class HistorialTransactionsView(APIView):
         
         transacciones = Transaction.objects.select_related('wallet_origen__user', 'wallet_destino__user').filter(
             Q(wallet_origen=billetera_usuario) | Q(wallet_destino=billetera_usuario)
-        ).order_by('-id')  # Ordenado del más reciente al más antiguo
+        ).order_by('-id') 
         
         paginator = PageNumberPagination()
         paginator.page_size = 10
@@ -262,7 +258,7 @@ class DepositoView(APIView):
                 )
         
             billetera.saldo += monto 
-            billetera.save(update_fields=['monto'])
+            billetera.save(update_fields=['saldo'])
                 
             Transaction.objects.create(
                 wallet_origen=None,
@@ -318,7 +314,6 @@ class MiBilleteraView(APIView):
     permission_classes = [IsAuthenticated]
     
     def get(self, request):
-        # 1. Buscamos el estado global de la billetera del usuario
         billetera = Wallet.objects.select_related('user').filter(user=request.user).first()
         
         if not billetera:
@@ -326,8 +321,6 @@ class MiBilleteraView(APIView):
                 "detail": "El usuario no tiene una billetera asociada"
             }, status=status.HTTP_404_NOT_FOUND)
             
-        # 2. Transformamos la información usando el serializador (incluye saldo, alias, cvu y moneda)
         serializer = WalletSerializer(billetera)
         
-        # 3. Retornamos los datos limpios estructurados hacia el cliente
         return Response(serializer.data, status=status.HTTP_200_OK)
