@@ -250,7 +250,7 @@ class DepositoView(APIView):
         
         serializer = DepositoSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        monto = serializer.validated_data['saldo']
+        monto = serializer.validated_data['monto']
 
         with transaction.atomic():    
             billetera = Wallet.objects.filter(user=request.user).select_for_update().first()

@@ -347,7 +347,7 @@ class DepositoTest(TransactionTestCase):
             request = factory.post('/api/depositar/', data, content_type='application/json')
             force_authenticate(request, user=user)
             
-            view = DepositoView.as_view() # Ojo con el typo "DepostivoView" si lo tienes mal escrito arriba
+            view = DepositoView.as_view()
             response = view(request)
             
             return {
