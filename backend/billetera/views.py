@@ -87,7 +87,6 @@ class SaldoWalletView(APIView):
 
 class TransferenciaView(APIView):
     permission_classes = [IsAuthenticated]
-    throttle_classes = [UserRateThrottle]
 
     def post(self, request):
         start_time = time.time()
