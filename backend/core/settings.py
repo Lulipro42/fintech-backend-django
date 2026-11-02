@@ -76,7 +76,7 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'core.wsgi.application'
 
-# Database
+
 # Database
 DATABASES = {
     'default': {
