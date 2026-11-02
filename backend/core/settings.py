@@ -121,8 +121,7 @@ REST_FRAMEWORK = {
     ),
     'EXCEPTION_HANDLER': 'billetera.exceptions.custom_exception_handler',
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
-    
-    
+
     'DEFAULT_THROTTLE_CLASSES': [] if TESTING else [
         'rest_framework.throttling.UserRateThrottle',
     ],
