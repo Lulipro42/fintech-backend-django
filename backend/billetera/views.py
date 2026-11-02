@@ -100,8 +100,6 @@ class TransferenciaView(APIView):
         billetera_destino = None
 
         try:
-            # CAMBIO: chequear la wallet origen ANTES de correr el serializer,
-            # así el 404 se devuelve antes de que el serializer intente usarla.
             billetera_origen_id = Wallet.objects.filter(user=request.user).values_list('id', flat=True).first()
 
             if not billetera_origen_id:
@@ -135,29 +133,41 @@ class TransferenciaView(APIView):
                     else:
                         billetera_origen = wallet_b
                         billetera_destino = wallet_a
-
-                    # Idempotencia: intentar crear, si existe → ya procesado
+                    
+                    if billetera_origen.moneda != billetera_destino.moneda:
+                        raise ValidationError("Las monedas no coinciden")
+                    
                     if idempotency_key:
                         try:
-                            Transaction.objects.create(
-                                wallet_origen=billetera_origen,
-                                wallet_destino=billetera_destino,
-                                monto=monto,
-                                idempotency_key=idempotency_key,
-                            )
+                            with transaction.atomic():
+                                Transaction.objects.create(
+                                    wallet_origen=billetera_origen,
+                                    wallet_destino=billetera_destino,
+                                    monto=monto,
+                                    idempotency_key=idempotency_key,
+                                )
+                                
                         except IntegrityError:
-                            status_log = "idempotencia"
-                            error_log = "Transferencia ya procesada"
-                            return Response(
-                                {"detail": "Transferencia ya procesada anteriormente"},
-                                status=status.HTTP_200_OK)
+                            transaccion_vieja = Transaction.objects.filter(wallet_origen=billetera_origen, idempotency_key=idempotency_key).select_for_update().first()                            
+                            
+                            if transaccion_vieja is None:
+                                raise
+                            
+                            if (transaccion_vieja.wallet_destino == billetera_destino and transaccion_vieja.monto == monto):
+                                status_log = "idempotencia"
+                                error_log = "Transferencia ya procesada"
+                                return Response(
+                                    {"detail": "Transferencia ya procesada anteriormente"},
+                                    status=status.HTTP_200_OK)
+                            else:
+                                return Response({"detail": "Error de idempotencia: los datos no coinciden con la solicitud original"}, status=status.HTTP_400_BAD_REQUEST)
                     else:
                         Transaction.objects.create(
                             wallet_origen=billetera_origen,
                             wallet_destino=billetera_destino,
                             monto=monto,
                         )
-
+                        
                     if billetera_origen.saldo < monto:
                         raise ValidationError("Fondos insuficientes")
 
@@ -205,11 +215,10 @@ class HistorialTransactionsView(APIView):
                 "detail": "El usuario no tiene una billetera"
             }, status=status.HTTP_404_NOT_FOUND)
             
-        # 2. Filtramos transacciones donde el usuario sea origen O destino usando Q
-        transacciones = Transaction.objects.select_related('wallet_origen__user', 'walle_destino__user').filter(
-            Q(wallet_origen=billetera_usuario) | Q(walle_destino=billetera_usuario)
-        ).order_by('-id')  # Ordenado del más reciente al más antiguo
         
+        transacciones = Transaction.objects.select_related('wallet_origen__user', 'wallet_destino__user').filter(
+            Q(wallet_origen=billetera_usuario) | Q(wallet_destino=billetera_usuario)
+        ).order_by('-id')  # Ordenado del más reciente al más antiguo
         
         paginator = PageNumberPagination()
         paginator.page_size = 10
@@ -229,23 +238,23 @@ class DepostivoView(APIView):
     permission_classes = [IsAuthenticated]
     
     def post(self, request):
-        billetera = Wallet.objects.filter(user=request.user).first()
-        if not billetera:
-            return Response({"detail":"El usuario no posee una billetera activa"},status=status.HTTP_404_NOT_FOUND)
         
-        # 1. Pasamos los datos al serializer
         serializer = DepostivoSerializer(data=request.data)
-        
-        # 2. Si el serializer no es válido, devuelve un error 400 automáticamente
-        # con el formato que ya definimos en el exception_handler
         serializer.is_valid(raise_exception=True)
-
         monto = serializer.validated_data['monto']
 
-        with transaction.atomic():
-            billetera.saldo += monto
-            billetera.save()
+        with transaction.atomic():    
+            billetera = Wallet.objects.filter(user=request.user).select_for_update().first()
             
+            if not billetera:
+                return Response(
+                    {"detail": "El usuario no posee una billetera activa"},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+        
+            billetera.saldo += monto 
+            billetera.save(update_fields=['monto'])
+                
             Transaction.objects.create(
                 wallet_origen=None,
                 wallet_destino=billetera,
@@ -256,9 +265,6 @@ class DepostivoView(APIView):
             {"detail": f"Depósito exitoso en tu cuenta de {billetera.moneda}."}, 
             status=status.HTTP_200_OK
         )
-        
-        
-
 
 # ==========================================
 # RETIRAR DINERO HACIA FUERA DEL SISTEMA
@@ -267,34 +273,33 @@ class RetiroMoneyView(APIView):
     permission_classes = [IsAuthenticated]
     
     def post(self, request):
-        wallet_origen = Wallet.objects.filter(user=request.user).select_related('user').first()
-        if not wallet_origen:
-            return Response({
-                "detail":"No posee billetera activa"
-            },status=status.HTTP_404_NOT_FOUND)
-            
-
         serializer = RetiroSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         monto = serializer.validated_data['monto']
 
-
-        if monto > wallet_origen.saldo:
-            return Response({
-                "detail":"Fondos insuficientes"
-            },status=status.HTTP_400_BAD_REQUEST)
-        
         with transaction.atomic():
+            wallet_origen = Wallet.objects.filter(user=request.user).select_for_update().first()
+            if not wallet_origen:
+                return Response({
+                    "detail": "No posee billetera activa"
+                }, status=status.HTTP_404_NOT_FOUND)
+            
+            if monto > wallet_origen.saldo:
+                return Response({
+                    "detail": "Fondos insuficientes"
+                }, status=status.HTTP_400_BAD_REQUEST)
+
             wallet_origen.saldo -= monto
-            wallet_origen.save()
+            wallet_origen.save(update_fields=['monto'])
             
             Transaction.objects.create(
                 wallet_origen=wallet_origen,
                 wallet_destino=None,
                 monto=monto
             )
-            
-        return Response({"detail":"Retiro procesado"},status=status.HTTP_200_OK)
+
+        return Response({"detail": "Retiro procesado"}, status=status.HTTP_200_OK)
+
 
 
 # ========================================== 

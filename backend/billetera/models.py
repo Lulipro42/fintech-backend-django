@@ -10,23 +10,16 @@ class Wallet(models.Model):
         ('EUR', 'Euros'),
     ]
     
-    # 1. Relación 1 a 1 con el usuario. Cada usuario tiene una sola billetera.
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='wallet')
     
-    # 2. El saldo. Un campo Decimal con un máximo de 12 dígitos, 2 decimales y que empiece en 0.00
     saldo = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'))
     
-    
-    # Tipo de moneda de la billetera. Por defecto arranca en Pesos Argentinos ('ARS')
     moneda = models.CharField(max_length=3, choices=CURRENCY_CHOICES, default='ARS')
     
-    # 3. Fecha de creación de la billetera
     creado_en = models.DateTimeField(auto_now_add=True)
     
-    # Cvu para poder poner esto en vez de un id
     cvu = models.CharField(unique=True, max_length=22, blank=True, null=True)
-    
-    # Alias para poder mejorar la interfaz del usuario en vez de poner id 
+
     alias = models.CharField(unique=True, max_length=50, blank=True, null=True )
     
     def save(self, *args, **kwargs):
@@ -51,29 +44,23 @@ class Wallet(models.Model):
                 raise ValueError("No se pudo generar un alias unico, intente de nuevo")
         
             self.alias = alias_generado
-        # 🔴 Se borra el super().save() de acá adentro
-        # 🔴 Se borran también las líneas viejas de palabras_elegidas, ya no hacen falta
     
-        super().save(*args, **kwargs)   # ✅ Este es el ÚNICO save(), al final, para ambos casos (creación y actualización)
+        super().save(*args, **kwargs)   
     def __str__(self) -> str:
         return f"Billetera de {self.user.username} ({self.moneda})"
             
 
 class Transaction(models.Model):
-    # 1. Billetera de origen
-    wallet_origen = models.ForeignKey(Wallet, on_delete=models.SET_NULL, null=True, db_index=True, related_name='transferencia_enviadas')
     
-    # 2. Billetera de destino (Corregido 'wallet_destino' para mantener consistencia)
+    wallet_origen = models.ForeignKey(Wallet, on_delete=models.SET_NULL, null=True, db_index=True, related_name='transferencia_enviadas')
+
     wallet_destino = models.ForeignKey(Wallet, on_delete=models.SET_NULL, null=True, db_index=True, related_name='transferencia_recibidas')
     
-    # 3. El monto transferido
     monto = models.DecimalField(max_digits=12, decimal_places=2)
     
-    # 4. Fecha de la transacción
     fecha = models.DateTimeField(auto_now_add=True)    
-    
-    # (Corregido: Se quitó max_length porque UUIDField no lo lleva)
-    idempotency_key = models.UUIDField(unique=True, null=True, blank=True)
+
+    idempotency_key = models.UUIDField(null=True, blank=True)
     
     def __str__(self) -> str:
         origen = self.wallet_origen.user.username if self.wallet_origen else "Deposito externo"
@@ -83,22 +70,19 @@ class Transaction(models.Model):
     class Meta:
         constraints = [
             models.UniqueConstraint(
-                fields=['idempotency_key'],
-                name='unique_idempotency_key',
-                # (Corregido: Se quitó la 'n' intrusa de 'indempotency')
+                fields=['wallet_origen','idempotency_key'],
+                name='unique_user_idempotency_key',
+                
                 condition=models.Q(idempotency_key__isnull=False) 
             )
         ]
 
 class Profile(models.Model):
-    # 1. Conexión 1 a 1 con el usuario nativo de Django. Si se borra el usuario, se borra el perfil.
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='perfil')
-    
-    # 2. El documento de identidad (DNI). Queremos que sea un texto de máximo 20 caracteres y que sea ÚNICO.
+
     dni = models.CharField(max_length=20, unique=True)
-    
-    # 3. El teléfono celular. Un CharField de máximo 20 caracteres.
+
     telefono = models.CharField(max_length=20)
-    
+
     def __str__(self) -> str:
         return f"Perfil de {self.user.username} - DNI: {self.dni}"

@@ -64,7 +64,7 @@ class TransactionSerializer(serializers.ModelSerializer):
         # 1. Capturamos el texto (CVU o Alias) que mandó el usuario
         destino = data.get('destino')
         
-        # 2. Buscamos en MySQL usando el operador OR ( | ) con Q
+        
         billetera = Wallet.objects.filter(Q(cvu=destino) | Q(alias=destino)).first()
         
         # 3. Si no se encontró ninguna billetera con ese CVU/Alias, rebotamos
@@ -105,7 +105,7 @@ class TransactionHistorialSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = Transaction
-        fields = ['id','monto','wallet_origen','walle_destino','fecha']
+        fields = ['id','monto','wallet_origen','wallet_destino','fecha']
         
         
 
