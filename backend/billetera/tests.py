@@ -251,7 +251,7 @@ class TransferenciaConcurrenciaTest(TransactionTestCase):
 
         # Debe haber exactamente 10 éxitos (100 / 10) y 10 fallos por fondos insuficientes
         self.assertEqual(len(exitosos), 10, f"Se esperaban 10 éxitos, hubo {len(exitosos)}")
-        self.assertEqual(len(fallidos), 10, f"Se esperaban 10 fallos 400, hubo {len(resultados) - len(exitorios)}")
+        self.assertEqual(len(fallidos), 10, f"Se esperaban 10 fallos 400, hubo {len(resultados) - len(exitosos)}")
 
         for fallo in faliidos:
             mensaje_error = str(fallo['data'])
